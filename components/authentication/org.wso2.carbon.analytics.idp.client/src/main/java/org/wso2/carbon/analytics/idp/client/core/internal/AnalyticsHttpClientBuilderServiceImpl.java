@@ -24,8 +24,19 @@ import feign.Request;
 import feign.auth.BasicAuthRequestInterceptor;
 import feign.gson.GsonDecoder;
 import feign.gson.GsonEncoder;
-
+import org.osgi.framework.BundleContext;
+import org.osgi.service.component.annotations.Activate;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Deactivate;
+import org.osgi.service.component.annotations.Reference;
+import org.osgi.service.component.annotations.ReferenceCardinality;
+import org.osgi.service.component.annotations.ReferencePolicy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.wso2.carbon.analytics.idp.client.core.api.AnalyticsHttpClientBuilderService;
+import org.wso2.carbon.config.ConfigurationException;
+import org.wso2.carbon.config.provider.ConfigProvider;
+import org.wso2.carbon.kernel.config.model.CarbonConfiguration;
 
 
 /**
@@ -33,20 +44,44 @@ import org.wso2.carbon.analytics.idp.client.core.api.AnalyticsHttpClientBuilderS
  * necessary. The reason for having a seperate Class is to encapsulate the hostname verification logic from their
  * HTTP service logic.
  */
+@Component(
+        immediate = true
+)
 public class AnalyticsHttpClientBuilderServiceImpl implements AnalyticsHttpClientBuilderService {
 
-    private boolean isHostnameVerifierEnabled;
+    private boolean isHostnameVerificationEnabled;
+    private static final Logger LOG = LoggerFactory.getLogger(AnalyticsHttpClientBuilderServiceImpl.class);
 
-    public AnalyticsHttpClientBuilderServiceImpl(boolean isEnabled) {
-        this.isHostnameVerifierEnabled = isEnabled;
+    @Activate
+    protected void start(BundleContext bundleContext) throws Exception {
+        LOG.debug("AnalyticsHttpClientBuilderServiceImpl Service Component Activated");
     }
 
-    public Client newDefaultClientInstance() {
-        if (!isHostnameVerifierEnabled) {
-            return new Client.Default(null, (hostName, sslSession) -> true);
-        } else {
-            return new Client.Default(null, null);
+    @Deactivate
+    protected void stop() {
+        LOG.debug("AnalyticsHttpClientBuilderServiceImpl Service Component Deactivated");
+    }
+
+    @Reference(
+            name = "carbon.config.provider",
+            service = ConfigProvider.class,
+            cardinality = ReferenceCardinality.MANDATORY,
+            policy = ReferencePolicy.DYNAMIC,
+            unbind = "unregisterConfigProvider"
+    )
+    protected void registerConfigProvider(ConfigProvider configProvider) {
+        CarbonConfiguration carbonConfiguration = null;
+        try {
+            carbonConfiguration = configProvider.getConfigurationObject(CarbonConfiguration.class);
+            this.isHostnameVerificationEnabled = carbonConfiguration.isHostnameVerificationEnabled();
+        } catch (ConfigurationException e) {
+            LOG.error("Error occurred while initializing AnalyticsHttpClientBuilderService: " + e.getMessage(), e);
         }
+
+    }
+
+    protected void unregisterConfigProvider(ConfigProvider configProvider) {
+        // Nothing to do
     }
 
     public <T> T build(String username, String password, int connectTimeoutMillis,
@@ -56,5 +91,13 @@ public class AnalyticsHttpClientBuilderServiceImpl implements AnalyticsHttpClien
                 .options(new Request.Options(connectTimeoutMillis, readTimeoutMillis))
                 .client(newDefaultClientInstance())
                 .target(target, url);
+    }
+
+    public Client newDefaultClientInstance() {
+        if (!isHostnameVerificationEnabled) {
+            return new Client.Default(null, (hostName, sslSession) -> true);
+        } else {
+            return new Client.Default(null, null);
+        }
     }
 }
